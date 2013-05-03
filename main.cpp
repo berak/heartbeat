@@ -7,6 +7,23 @@ using namespace cv;
 using namespace std;
 
 
+
+template <typename Vec, typename Operator>
+void foreach(Vec &v, Operator op) {
+    Vec::iterator it = v.begin();
+    for (; it!=v.end(); ++it) {
+        op(*it);
+    }
+}
+
+template <typename Vec, typename Operator>
+void foreach_i(Vec &v, Operator op) {
+    for (size_t i=0; i<v.size(); ++i) {
+        op(i,v[i]);
+    }
+}
+
+
 void Abs(float &it)
 {
     it = abs(it);
@@ -27,34 +44,6 @@ struct MaxId
     }
 };
 
-template <typename Vec, typename Operator>
-void foreach(Vec &v, Operator op)
-{
-    Vec::iterator it = v.begin();
-    for (; it!=v.end(); ++it)
-    {
-        op(*it);
-    }
-}
-template <typename Vec, typename Operator>
-void foreach_i(Vec &v, Operator op)
-{
-    Vec::iterator it = v.begin();
-    for (size_t i=0; i<v.size(); ++i)
-    {
-        op(i,v[i]);
-    }
-}
-template <typename Vec, typename Operator>
-void Where(const Vec &a, Vec &b, Operator op)
-{
-    Vec::iterator it = a.begin();
-    for (; it!=a.end(); ++it)
-    {
-        if ( op(*it) )
-            b.push_back(*it);
-    }
-}
 
 inline
 double hamming(double n,int N) 
@@ -80,30 +69,63 @@ struct HammingInv
         it = it / float(hamming(i,N));
     }
 };
-//void hamming(vector<float> & v)
-//{
-//    size_t vs = v.size();
-//    for ( size_t i=0; i<vs; i++ )
-//    {
-//        v[i] = v[i] * float(hamming(i,vs));
-//    }
-//}
+
+inline float ipol(float a,float b,float t,float dt)
+{
+    return (a*(1.0-t) + b*t) / dt;
+}
+
 
 struct Ring
 {
     vector<float> elm;
+    vector<int64> tim;
     int p;
 
-    Ring(int n=0) : elm(n), p(0)  {}
+    Ring(int n=1) : elm(n),tim(n), p(0)  {}
 
-    operator float & ()      { return elm[p]; }
-    float & operator ++(int) { p += 1; p %= elm.size(); return elm[p]; } // postfix
+    void push(int64 t, float v) 
+    { 
+        elm[p]=v; 
+        tim[p]=t; 
+        
+        p += 1; 
+        p %= elm.size();
+    }
 
-    // wrap timebuffer around current pos:
-    void wrap( vector<float> & din)
+    // wrap timebuffer around current pos and interpolate:
+    void _wrap( vector<float> & din, int i, float ts=0.02f, int maxdin=512 )
     {
-        din.insert( din.begin(), elm.begin()+p, elm.end() );
-        din.insert( din.end(), elm.begin(), elm.begin()+p );
+        int next = (i+1)%elm.size();
+
+        int64 t0 = tim[i];
+        if ( t0==0 ) return;
+        int64 t1 = tim[next];
+        if ( t1<=t0 ) return;
+
+        double dt = (t1-t0) / getTickFrequency();
+        double v0 = elm[i];
+        double v1 = elm[next];
+        double ds = (v1-v0);
+        for ( float t=0; t<dt; t+=ts )
+        {
+            if ( din.size() >= maxdin )
+                return;
+            float v = float(v0+t*ds/dt);
+            din.push_back(v);
+        }
+    }
+
+    void wrap( vector<float> & din )
+    {
+        for( size_t i=p+1; i<elm.size(); i++ )
+        {
+            _wrap(din,i);
+        }
+        for( size_t i=0; i<p; i++ )
+        {
+            _wrap(din,i);
+        }
     }
 };
 
@@ -120,12 +142,17 @@ int main( int argc, char** argv )
     bool doDct=false;
     bool doHam=false;
 
+    int tpos=50;
+    int twid=20;
     int rsize=240;
     Ring ring(rsize);
 
     Rect region = Rect(130,100,60,60);
 
     namedWindow("cam",0);
+    namedWindow("control",0);
+    createTrackbar("pos","control",&tpos,512-128);
+    createTrackbar("wid","control",&twid,128);
     VideoCapture cap(0);
     // cap.set(CAP_PROP_SETTINGS,1);
     int f = 0;
@@ -142,13 +169,15 @@ int main( int argc, char** argv )
         Mat rgb[3];
         split(roi, rgb);
         Scalar m = mean(rgb[2]);
-        ring ++ = float(m[0]);
+        ring.push(t0, float(m[0]));
+        int disiz=0,dosiz=0;
         if ( doDct )
         {
-            vector<float> dout;
             vector<float> din;
+            vector<float> dout;
             ring.wrap(din);
-
+            disiz=ring.elm.size();
+            dosiz=din.size();
             if ( doHam )
                 foreach_i(din,Hamming(din.size()));
 
@@ -156,15 +185,15 @@ int main( int argc, char** argv )
 
             foreach(dout,Abs);
             paint(frame,dout,50,250,Scalar(0,0,200),1);
+            rectangle(frame,Point(50+tpos,250-30),Point(50+tpos+twid,250+30),Scalar(200,0,0));
 
-            int bpm_limits[] = {20,60};
             vector<float> clipped;
-            clipped.insert(clipped.begin(),dout.begin()+bpm_limits[0],dout.begin()+bpm_limits[1]);
+            clipped.insert(clipped.begin(),dout.begin()+tpos,dout.begin()+tpos+twid);
 
             vector<float> idft;
             dft(clipped,idft,DFT_INVERSE);
-            //foreach_i(idft,HammingInv(idft.size()));
-            paint(frame,idft,350,50,Scalar(0,220,220),0.25f);
+            foreach_i(idft,Hamming(idft.size()));
+            paint(frame,idft,350,50,Scalar(0,220,220),0.5f);
         }
         paint(frame,ring.elm,50,50,Scalar(0,200,0),2);
         circle(frame,Point(50+ring.p,50+int(2*ring.elm[ring.p])),3,Scalar(60,230,0),2);
@@ -178,7 +207,7 @@ int main( int argc, char** argv )
         if ( f % 10 ==9 )
         {
             double fps =  1.0 / double( (t/10) /getTickFrequency());
-            cerr << format("%4d %3.3f %3.3f",f,fps,float(m[0])) << endl;
+            cerr << format("%4d %3.3f %3.3f %6d %6d",f,fps,float(m[0]),disiz,dosiz) << endl;
             t = 0;
         }
         f ++;
