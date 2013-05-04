@@ -70,11 +70,6 @@ struct HammingInv
     }
 };
 
-inline float ipol(float a,float b,float t,float dt)
-{
-    return (a*(1.0-t) + b*t) / dt;
-}
-
 
 struct Ring
 {
@@ -102,11 +97,12 @@ struct Ring
         if ( t0==0 ) return;
         int64 t1 = tim[next];
         if ( t1<=t0 ) return;
-
         double dt = (t1-t0) / getTickFrequency();
+
         double v0 = elm[i];
         double v1 = elm[next];
         double ds = (v1-v0);
+
         for ( float t=0; t<dt; t+=ts )
         {
             if ( din.size() >= maxdin )
@@ -144,10 +140,11 @@ int main( int argc, char** argv )
 
     int tpos=50;
     int twid=20;
-    int rsize=240;
+    int rsize=322;
     Ring ring(rsize);
 
     Rect region = Rect(130,100,60,60);
+    Rect region_2 = Rect(440,100,60,60);
 
     namedWindow("cam",0);
     namedWindow("control",0);
@@ -165,11 +162,18 @@ int main( int argc, char** argv )
         if ( frame.empty() )
             break;
         rectangle(frame,region,Scalar(200,0,0));
+        rectangle(frame,region_2,Scalar(100,50,0));
+
+        Mat roi2 = frame(region_2);
+        Mat rgb2[3]; split(roi2, rgb2);
+        Scalar m2 = mean(rgb2[2]);
+
         Mat roi = frame(region);
-        Mat rgb[3];
-        split(roi, rgb);
+        Mat rgb[3]; split(roi, rgb);
         Scalar m = mean(rgb[2]);
-        ring.push(t0, float(m[0]));
+
+        float z = float(m[0]-m2[0]);
+        ring.push(t0, z);
         int disiz=0,dosiz=0;
         if ( doDct )
         {
@@ -192,11 +196,14 @@ int main( int argc, char** argv )
 
             vector<float> idft;
             dft(clipped,idft,DFT_INVERSE);
+
             foreach_i(idft,Hamming(idft.size()));
-            paint(frame,idft,350,50,Scalar(0,220,220),0.5f);
+            paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f);
         }
-        paint(frame,ring.elm,50,50,Scalar(0,200,0),2);
-        circle(frame,Point(50+ring.p,50+int(2*ring.elm[ring.p])),3,Scalar(60,230,0),2);
+        float pf = 1.0f;
+        paint(frame,ring.elm,50,50,Scalar(0,200,0),pf);
+        int p = (ring.p-1+ring.elm.size())%ring.elm.size();
+        circle(frame,Point(50+p,50+int(pf*ring.elm[p])),3,Scalar(60,230,0),2);
         imshow("cam",frame);
         int k = waitKey(1);
         if ( k==27 ) break;
@@ -207,7 +214,7 @@ int main( int argc, char** argv )
         if ( f % 10 ==9 )
         {
             double fps =  1.0 / double( (t/10) /getTickFrequency());
-            cerr << format("%4d %3.3f %3.3f %6d %6d",f,fps,float(m[0]),disiz,dosiz) << endl;
+            cerr << format("%4d %3.3f %3.3f %6d %6d",f,fps,z,disiz,dosiz) << endl;
             t = 0;
         }
         f ++;
