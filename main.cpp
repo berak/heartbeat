@@ -9,36 +9,33 @@ using namespace std;
 
 
 template <typename Vec, typename Operator>
-void foreach(Vec &v, Operator op) {
-    Vec::iterator it = v.begin();
-    for (; it!=v.end(); ++it) {
-        op(*it);
-    }
-}
-
-template <typename Vec, typename Operator>
-void foreach_i(Vec &v, Operator op) {
+void foreach(Vec &v, Operator &op) {
     for (size_t i=0; i<v.size(); ++i) {
         op(i,v[i]);
     }
 }
 
 
-void Abs(float &it)
+void Abs(int i, float &it)
 {
     it = abs(it);
 }
 
-struct MaxId
+struct MinMaxId
 {
-    int id;
-    float m;
-    MaxId() : id(0),m(-99999) {}
+    float m,M;
+    int mi,Mi;
+    MinMaxId() : m(99999),M(-99999),mi(0),Mi(0) {}
     void operator () (int i, float & it)
     {
-        if ( it > m )
+        if ( it > M )
         {
-            id = i;
+            Mi = i;
+            M = it;
+        }
+        if ( it < m )
+        {
+            mi = i;
             m = it;
         }
     }
@@ -77,7 +74,7 @@ struct Ring
     vector<int64> tim;
     int p;
 
-    Ring(int n=1) : elm(n),tim(n), p(0)  {}
+    Ring(int n=1) : elm(n,0),tim(n,0), p(0)  {}
 
     void push(int64 t, float v) 
     { 
@@ -107,40 +104,43 @@ struct Ring
         {
             if ( din.size() >= maxdin )
                 return;
-            float v = float(v0+t*ds/dt);
+            float v = float(v0+t*ds/dt); // lerp
             din.push_back(v);
         }
     }
 
     void wrap( vector<float> & din )
     {
+        int maxdin=512;
+        float ts = 0.02f;
         for( size_t i=p+1; i<elm.size(); i++ )
         {
-            _wrap(din,i);
+            _wrap(din,i,ts,maxdin);
         }
         for( size_t i=0; i<p; i++ )
         {
-            _wrap(din,i);
+            _wrap(din,i,ts,maxdin);
         }
     }
 };
 
-void paint(Mat & img, const vector<float> & elm, int x, int y, Scalar col,float s=1.0f)
+void paint(Mat & img, const vector<float> & elm, int x, int y, Scalar col,float sy=1.0f, float sx=1.0f)
 {
     for ( size_t i=1; i<elm.size(); i++ )
     {
-        line(img,Point(x+i-1,y+int(s*elm[i-1])),Point(x+i,y+int(s*elm[i])),col,2);
+        line(img,Point(x+int(sx*(i-1)),y+int(sy*elm[i-1])),Point(x+int(sx*(i)),y+int(sy*elm[i])),col,2);
     }
 }
 
 int main( int argc, char** argv )
 {
-    bool doDct=false;
+    bool doDct=true;
     bool doHam=false;
 
+    int spike_thresh=30;
     int tpos=50;
     int twid=20;
-    int rsize=322;
+    int rsize=256;
     Ring ring(rsize);
 
     Rect region = Rect(130,100,60,60);
@@ -149,7 +149,7 @@ int main( int argc, char** argv )
     namedWindow("cam",0);
     namedWindow("control",0);
     createTrackbar("pos","control",&tpos,512-128);
-    createTrackbar("wid","control",&twid,128);
+    createTrackbar("width","control",&twid,128);
     VideoCapture cap(0);
     // cap.set(CAP_PROP_SETTINGS,1);
     int f = 0;
@@ -161,9 +161,8 @@ int main( int argc, char** argv )
         cap >> frame;
         if ( frame.empty() )
             break;
-        rectangle(frame,region,Scalar(200,0,0));
-        rectangle(frame,region_2,Scalar(100,50,0));
-
+        
+        // take the diff of a skin to a non-skin rect as measure for change
         Mat roi2 = frame(region_2);
         Mat rgb2[3]; split(roi2, rgb2);
         Scalar m2 = mean(rgb2[2]);
@@ -174,31 +173,43 @@ int main( int argc, char** argv )
 
         float z = float(m[0]-m2[0]);
         ring.push(t0, z);
+
+        rectangle(frame,region,Scalar(200,0,0));
+        rectangle(frame,region_2,Scalar(50,150,0));
+        line(frame,region.tl(),Point(region.tl().x,region.tl().y+m[0]/4),Scalar(150,170,0),6);
+        line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+m2[0]/4),Scalar(150,170,0),6);
         int disiz=0,dosiz=0;
-        if ( doDct )
+        while ( doDct && ring.elm.back() != 0 ) // once
         {
+            // check for spikes
+            MinMaxId mm;
+            foreach(ring.elm,mm);
+            if (mm.M-mm.m > spike_thresh)
+                break;
+
             vector<float> din;
             vector<float> dout;
             ring.wrap(din);
             disiz=ring.elm.size();
             dosiz=din.size();
-            if ( doHam )
-                foreach_i(din,Hamming(din.size()));
+            foreach(din,Hamming(din.size()));
 
             dft( din, dout );
 
             foreach(dout,Abs);
-            paint(frame,dout,50,250,Scalar(0,0,200),1);
+            paint(frame,dout,50,250,Scalar(0,0,200),1, 1);
             rectangle(frame,Point(50+tpos,250-30),Point(50+tpos+twid,250+30),Scalar(200,0,0));
 
+            // process the selected fft window:
             vector<float> clipped;
             clipped.insert(clipped.begin(),dout.begin()+tpos,dout.begin()+tpos+twid);
 
             vector<float> idft;
             dft(clipped,idft,DFT_INVERSE);
 
-            foreach_i(idft,Hamming(idft.size()));
-            paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f);
+            foreach(idft,Hamming(idft.size()));
+            paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f,5.0f);
+            break;
         }
         float pf = 1.0f;
         paint(frame,ring.elm,50,50,Scalar(0,200,0),pf);
