@@ -9,16 +9,26 @@ using namespace std;
 
 
 template <typename Vec, typename Operator>
-void foreach(Vec &v, Operator &op) {
-    for (size_t i=0; i<v.size(); ++i) {
+void foreach(Vec &v, Operator &op,size_t off,size_t len) {
+    for (size_t i=off; i<len; ++i) {
         op(i,v[i]);
     }
+}
+
+template <typename Vec, typename Operator>
+void foreach(Vec &v, Operator &op) {
+    return foreach(v,op,0,v.size());
 }
 
 
 void Abs(int i, float &it)
 {
     it = abs(it);
+}
+
+void Log2(int i, float &it)
+{
+    it = pow(it,0.85f);
 }
 
 struct MinMaxId
@@ -78,15 +88,15 @@ struct Ring
 
     void push(int64 t, float v) 
     { 
-        elm[p]=v; 
-        tim[p]=t; 
-        
         p += 1; 
         p %= elm.size();
+
+        elm[p]=v; 
+        tim[p]=t;         
     }
 
     // wrap timebuffer around current pos and interpolate:
-    void _wrap( vector<float> & din, int i, float ts=0.02f, int maxdin=512 )
+    void _wrap( vector<float> & din, int i, float & t_off, float ts=0.02f, int maxdin=512 )
     {
         int next = (i+1)%elm.size();
 
@@ -100,26 +110,31 @@ struct Ring
         double v1 = elm[next];
         double ds = (v1-v0);
 
-        for ( float t=0; t<dt; t+=ts )
+        float t=t_off;
+        for ( ; t<dt; t+=ts )
         {
             if ( din.size() >= maxdin )
+            {
                 return;
+            }
             float v = float(v0+t*ds/dt); // lerp
             din.push_back(v);
         }
+        t_off = t - dt;
     }
 
     void wrap( vector<float> & din )
     {
         int maxdin=512;
         float ts = 0.02f;
+        float t_off = 0.0f;
         for( size_t i=p+1; i<elm.size(); i++ )
         {
-            _wrap(din,i,ts,maxdin);
+            _wrap(din,i,t_off,ts,maxdin);
         }
         for( size_t i=0; i<p; i++ )
         {
-            _wrap(din,i,ts,maxdin);
+            _wrap(din,i,t_off,ts,maxdin);
         }
     }
 };
@@ -135,11 +150,13 @@ void paint(Mat & img, const vector<float> & elm, int x, int y, Scalar col,float 
 int main( int argc, char** argv )
 {
     bool doDct=true;
-    bool doHam=false;
+    bool doHam=true;
+    bool doAbs=true;
 
+    int hind = 2;
     int spike_thresh=30;
-    int tpos=50;
-    int twid=20;
+    int tpos=15;
+    int twid=14;
     int rsize=256;
     Ring ring(rsize);
 
@@ -161,27 +178,22 @@ int main( int argc, char** argv )
         cap >> frame;
         if ( frame.empty() )
             break;
-        
+
         // take the diff of a skin to a non-skin rect as measure for change
-        Mat roi2 = frame(region_2);
-        Mat rgb2[3]; split(roi2, rgb2);
-        Scalar m2 = mean(rgb2[2]);
-
-        Mat roi = frame(region);
-        Mat rgb[3]; split(roi, rgb);
-        Scalar m = mean(rgb[2]);
-
-        float z = float(m[0]-m2[0]);
+        Scalar m  = mean(frame(region));
+        Scalar m2 = mean(frame(region_2));
+        float z = float(m[hind]-m2[hind]);
         ring.push(t0, z);
 
         rectangle(frame,region,Scalar(200,0,0));
+        line(frame,region.tl(),Point(region.tl().x,region.tl().y+m[0]/4),Scalar(150,170,0),5);
         rectangle(frame,region_2,Scalar(50,150,0));
-        line(frame,region.tl(),Point(region.tl().x,region.tl().y+m[0]/4),Scalar(150,170,0),6);
-        line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+m2[0]/4),Scalar(150,170,0),6);
+        line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+m2[0]/4),Scalar(150,170,0),5);
+
         int disiz=0,dosiz=0;
         while ( doDct && ring.elm.back() != 0 ) // once
         {
-            // check for spikes
+            // skip dft if input contains spikes
             MinMaxId mm;
             foreach(ring.elm,mm);
             if (mm.M-mm.m > spike_thresh)
@@ -192,14 +204,21 @@ int main( int argc, char** argv )
             ring.wrap(din);
             disiz=ring.elm.size();
             dosiz=din.size();
-            foreach(din,Hamming(din.size()));
+            if ( doHam )
+                foreach(din,Hamming(din.size()));
 
             dft( din, dout );
+            //foreach(dout,Log2);
 
-            foreach(dout,Abs);
-            paint(frame,dout,50,250,Scalar(0,0,200),1, 1);
+            if ( doAbs )
+                foreach(dout,Abs);
+            paint(frame,dout,50,250,Scalar(0,0,200),1, 1.0f);
             rectangle(frame,Point(50+tpos,250-30),Point(50+tpos+twid,250+30),Scalar(200,0,0));
 
+            MinMaxId mm2;
+            foreach(dout,mm2,20,dout.size());
+            rectangle(frame,Point(50+mm2.Mi-5,250-30),Point(50+mm2.Mi+5,250+30),Scalar(2,200,0));
+            
             // process the selected fft window:
             vector<float> clipped;
             clipped.insert(clipped.begin(),dout.begin()+tpos,dout.begin()+tpos+twid);
@@ -207,19 +226,23 @@ int main( int argc, char** argv )
             vector<float> idft;
             dft(clipped,idft,DFT_INVERSE);
 
-            foreach(idft,Hamming(idft.size()));
+            if ( doHam )
+                foreach(idft,Hamming(idft.size()));
+            //if ( doAbs )
+            //    foreach(idft,Abs);
             paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f,5.0f);
             break;
         }
         float pf = 1.0f;
-        paint(frame,ring.elm,50,50,Scalar(0,200,0),pf);
-        int p = (ring.p-1+ring.elm.size())%ring.elm.size();
-        circle(frame,Point(50+p,50+int(pf*ring.elm[p])),3,Scalar(60,230,0),2);
+        paint(frame,ring.elm,50,50-z,Scalar((hind==0?200:0),(hind==1?200:0),(hind==2?200:0)),pf);
+        circle(frame,Point(50+ring.p,50-z+int(pf*ring.elm[ring.p])),3,Scalar(60,230,0),2);
         imshow("cam",frame);
         int k = waitKey(1);
         if ( k==27 ) break;
         if ( k=='1') doDct=!doDct;
         if ( k=='2') doHam=!doHam;
+        if ( k=='3') doAbs=!doAbs;
+        if ( k=='4') { hind++; hind%=3; cerr << "hind " << hind << endl; }
         int64 t1 = getTickCount();
         t += (t1-t0);
         if ( f % 10 ==9 )
