@@ -55,8 +55,7 @@ struct MinMaxId
 inline
 double hamming(double n,int N) 
 { 
-    const double twopi = 2.0 * CV_PI;// 24.0/7.0;
-    return 0.54-0.46*cos((twopi*n)/(N-1)); 
+    return 0.54-0.46*cos((2.0*CV_PI*n)/(N-1)); 
 }
 struct Hamming
 {
@@ -95,46 +94,28 @@ struct Ring
         tim[p]=t;         
     }
 
-    // wrap timebuffer around current pos and interpolate:
-    void _wrap( vector<float> & din, int i, float & t_off, float ts=0.02f, int maxdin=512 )
+    // our timebuffer got sampled, whenever there was a frame abvailable.
+    // upsample to len samples evenly spaced in time 
+    void wrap( vector<float> & din, size_t len=512, float ts=0.02f )
     {
-        int next = (i+1)%elm.size();
-
-        int64 t0 = tim[i];
-        if ( t0==0 ) return;
-        int64 t1 = tim[next];
-        if ( t1<=t0 ) return;
-        double dt = (t1-t0) / getTickFrequency();
-
-        double v0 = elm[i];
-        double v1 = elm[next];
-        double ds = (v1-v0);
-
-        float t=t_off;
-        for ( ; t<dt; t+=ts )
+        int   e  = (p+1)%elm.size();
+        float t  = float(tim[e]/getTickFrequency());
+        float tz = float(tim[p]/getTickFrequency());
+        while( din.size()<len && t<tz )
         {
-            if ( din.size() >= maxdin )
-            {
-                return;
-            }
-            float v = float(v0+t*ds/dt); // lerp
+            int  nxt = (e+1)%elm.size();
+            float t0 = float(tim[e]/getTickFrequency());
+            float t1 = float(tim[nxt]/getTickFrequency());
+            float v0 = elm[e];
+            float v1 = elm[nxt];
+            float v  = float(v0+(t-t0)*(v1-v0)/(t1-t0)); // lerp
             din.push_back(v);
-        }
-        t_off = t - dt;
-    }
 
-    void wrap( vector<float> & din )
-    {
-        int maxdin=512;
-        float ts = 0.02f;
-        float t_off = 0.0f;
-        for( size_t i=p+1; i<elm.size(); i++ )
-        {
-            _wrap(din,i,t_off,ts,maxdin);
-        }
-        for( size_t i=0; i<p; i++ )
-        {
-            _wrap(din,i,t_off,ts,maxdin);
+            t += ts;
+            if ( t >= t1 )
+            {
+                e = nxt;
+            }
         }
     }
 };
@@ -186,9 +167,9 @@ int main( int argc, char** argv )
         ring.push(t0, z);
 
         rectangle(frame,region,Scalar(200,0,0));
-        line(frame,region.tl(),Point(region.tl().x,region.tl().y+m[0]/4),Scalar(150,170,0),5);
+        line(frame,region.tl(),Point(region.tl().x,region.tl().y+int(m[0]/4)),Scalar(150,170,0),5);
         rectangle(frame,region_2,Scalar(50,150,0));
-        line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+m2[0]/4),Scalar(150,170,0),5);
+        line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+int(m2[0]/4)),Scalar(150,170,0),5);
 
         int disiz=0,dosiz=0;
         while ( doDct && ring.elm.back() != 0 ) // once
@@ -209,7 +190,6 @@ int main( int argc, char** argv )
 
             dft( din, dout );
             //foreach(dout,Log2);
-
             if ( doAbs )
                 foreach(dout,Abs);
             paint(frame,dout,50,250,Scalar(0,0,200),1, 1.0f);
@@ -234,8 +214,8 @@ int main( int argc, char** argv )
             break;
         }
         float pf = 1.0f;
-        paint(frame,ring.elm,50,50-z,Scalar((hind==0?200:0),(hind==1?200:0),(hind==2?200:0)),pf);
-        circle(frame,Point(50+ring.p,50-z+int(pf*ring.elm[ring.p])),3,Scalar(60,230,0),2);
+        paint(frame,ring.elm,50,50-int(z),Scalar((hind==0?200:0),(hind==1?200:0),(hind==2?200:0)),pf);
+        circle(frame,Point(50+ring.p,50-int(z)+int(pf*ring.elm[ring.p])),3,Scalar(60,230,0),2);
         imshow("cam",frame);
         int k = waitKey(1);
         if ( k==27 ) break;
