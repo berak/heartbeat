@@ -94,11 +94,19 @@ struct Ring
         tim[p]=t;         
     }
 
-    // our timebuffer got sampled, whenever there was a frame abvailable.
-    // upsample to len samples evenly spaced in time 
-    void wrap( vector<float> & din, size_t len=512, float ts=0.02f )
+    int next()
     {
-        int   e  = (p+1)%elm.size();
+        return (p+1)%elm.size();
+    }
+    int last()
+    {
+        return (p-1)%elm.size();
+    }
+    // our timebuffer got sampled, whenever there was a frame available.
+    // upsample to len samples evenly spaced in time 
+    int wrap( vector<float> & din, size_t len=512, float ts=0.02f )
+    {
+        int   e  = next();
         float t  = float(tim[e]/getTickFrequency());
         float tz = float(tim[p]/getTickFrequency());
         while( din.size()<len && t<tz )
@@ -117,6 +125,7 @@ struct Ring
                 e = nxt;
             }
         }
+        return p-e;
     }
 };
 
@@ -127,7 +136,19 @@ void paint(Mat & img, const vector<float> & elm, int x, int y, Scalar col,float 
         line(img,Point(x+int(sx*(i-1)),y+int(sy*elm[i-1])),Point(x+int(sx*(i)),y+int(sy*elm[i])),col,2);
     }
 }
-
+//void paint(Mat & img, const Ring & ring, int x, int y, Scalar col,float sy=1.0f, float sx=1.0f)
+//{
+//    const vector<float> & elm = ring.elm;
+//    for ( size_t j=0; j<elm.size(); j++ )
+//    {
+//        int a = (ring.p + j) % elm.size();
+//        if ( a == 0 ) 
+//            continue;
+//        int b = a-1;
+//        line(img,Point(x+int(sx*b),y+int(sy*elm[b])),Point(x+int(sx*a),y+int(sy*elm[a])),col,2);
+//    }
+//}
+//
 int main( int argc, char** argv )
 {
     bool doDct=true;
@@ -140,7 +161,7 @@ int main( int argc, char** argv )
     int twid=14;
     int rsize=256;
     Ring ring(rsize);
-
+    Ring peak(128);
     Rect region = Rect(130,100,60,60);
     Rect region_2 = Rect(440,100,60,60);
 
@@ -168,23 +189,25 @@ int main( int argc, char** argv )
 
         rectangle(frame,region,Scalar(200,0,0));
         line(frame,region.tl(),Point(region.tl().x,region.tl().y+int(m[0]/4)),Scalar(150,170,0),5);
-        rectangle(frame,region_2,Scalar(50,150,0));
+        rectangle(frame,region_2,Scalar(20,80,10));
         line(frame,region_2.tl(),Point(region_2.tl().x,region_2.tl().y+int(m2[0]/4)),Scalar(150,170,0),5);
 
-        int disiz=0,dosiz=0;
+        int disiz=0,dosiz=0,Mi=0;
+        float pf = 1.0f;
         while ( doDct && ring.elm.back() != 0 ) // once
         {
+            pf = 3.0f;
             // skip dft if input contains spikes
             MinMaxId mm;
             foreach(ring.elm,mm);
             if (mm.M-mm.m > spike_thresh)
                 break;
 
-            vector<float> din;
-            vector<float> dout;
-            ring.wrap(din);
-            disiz=ring.elm.size();
+            vector<float> din, dout;
+            int left = ring.wrap(din);
+            disiz=ring.elm.size()-left;
             dosiz=din.size();
+            //Mat(din) *= 4.0f;
             if ( doHam )
                 foreach(din,Hamming(din.size()));
 
@@ -197,8 +220,8 @@ int main( int argc, char** argv )
 
             MinMaxId mm2;
             foreach(dout,mm2,20,dout.size());
-            rectangle(frame,Point(50+mm2.Mi-5,250-30),Point(50+mm2.Mi+5,250+30),Scalar(2,200,0));
-            
+            rectangle(frame,Point(50+mm2.Mi-5,250-30),Point(50+mm2.Mi+5,250+30),Scalar(2,100,0));
+            Mi=mm2.Mi;
             // process the selected fft window:
             vector<float> clipped;
             clipped.insert(clipped.begin(),dout.begin()+tpos,dout.begin()+tpos+twid);
@@ -208,12 +231,17 @@ int main( int argc, char** argv )
 
             if ( doHam )
                 foreach(idft,Hamming(idft.size()));
-            //if ( doAbs )
-            //    foreach(idft,Abs);
             paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f,5.0f);
+
+            // foreach(idft,Abs);
+            MinMaxId mm3;
+            foreach(idft,mm3);
+            peak.push(mm3.Mi,mm3.M);
+            paint(frame,peak.elm,50,350,Scalar(0,80,0),1,4);
+            circle(frame,Point(50+peak.p*4,350+int(peak.elm[peak.p])),3,Scalar(60,230,0),2);
+            //if ( doAbs )
             break;
         }
-        float pf = 1.0f;
         paint(frame,ring.elm,50,50-int(z),Scalar((hind==0?200:0),(hind==1?200:0),(hind==2?200:0)),pf);
         circle(frame,Point(50+ring.p,50-int(z)+int(pf*ring.elm[ring.p])),3,Scalar(60,230,0),2);
         imshow("cam",frame);
@@ -228,7 +256,7 @@ int main( int argc, char** argv )
         if ( f % 10 ==9 )
         {
             double fps =  1.0 / double( (t/10) /getTickFrequency());
-            cerr << format("%4d %3.3f %3.3f %6d %6d",f,fps,z,disiz,dosiz) << endl;
+            cerr << format("%4d %3.3f %3.3f %6d %6d %6d",f,fps,z,disiz,dosiz,Mi) << endl;
             t = 0;
         }
         f ++;
