@@ -26,10 +26,6 @@ void Abs(int i, float &it)
     it = abs(it);
 }
 
-void Log2(int i, float &it)
-{
-    it = pow(it,0.85f);
-}
 
 struct MinMaxId
 {
@@ -38,16 +34,8 @@ struct MinMaxId
     MinMaxId() : m(99999),M(-99999),mi(0),Mi(0) {}
     void operator () (int i, float & it)
     {
-        if ( it > M )
-        {
-            Mi = i;
-            M = it;
-        }
-        if ( it < m )
-        {
-            mi = i;
-            m = it;
-        }
+        if ( it > M ) {  Mi = i;  M = it;  }
+        if ( it < m ) {  mi = i;  m = it;  }
     }
 };
 
@@ -136,19 +124,7 @@ void paint(Mat & img, const vector<float> & elm, int x, int y, Scalar col,float 
         line(img,Point(x+int(sx*(i-1)),y+int(sy*elm[i-1])),Point(x+int(sx*(i)),y+int(sy*elm[i])),col,2);
     }
 }
-//void paint(Mat & img, const Ring & ring, int x, int y, Scalar col,float sy=1.0f, float sx=1.0f)
-//{
-//    const vector<float> & elm = ring.elm;
-//    for ( size_t j=0; j<elm.size(); j++ )
-//    {
-//        int a = (ring.p + j) % elm.size();
-//        if ( a == 0 ) 
-//            continue;
-//        int b = a-1;
-//        line(img,Point(x+int(sx*b),y+int(sy*elm[b])),Point(x+int(sx*a),y+int(sy*elm[a])),col,2);
-//    }
-//}
-//
+
 int main( int argc, char** argv )
 {
     bool doDct=true;
@@ -207,12 +183,11 @@ int main( int argc, char** argv )
             int left = ring.wrap(din);
             disiz=ring.elm.size()-left;
             dosiz=din.size();
-            //Mat(din) *= 4.0f;
             if ( doHam )
                 foreach(din,Hamming(din.size()));
 
             dft( din, dout );
-            //foreach(dout,Log2);
+
             if ( doAbs )
                 foreach(dout,Abs);
             paint(frame,dout,50,250,Scalar(0,0,200),1, 1.0f);
@@ -222,6 +197,7 @@ int main( int argc, char** argv )
             foreach(dout,mm2,20,dout.size());
             rectangle(frame,Point(50+mm2.Mi-5,250-30),Point(50+mm2.Mi+5,250+30),Scalar(2,100,0));
             Mi=mm2.Mi;
+
             // process the selected fft window:
             vector<float> clipped;
             clipped.insert(clipped.begin(),dout.begin()+tpos,dout.begin()+tpos+twid);
@@ -233,13 +209,13 @@ int main( int argc, char** argv )
                 foreach(idft,Hamming(idft.size()));
             paint(frame,idft,50+tpos,250-30,Scalar(0,220,220),0.8f,5.0f);
 
-            // foreach(idft,Abs);
+            // peak of idft is the actual cardiac
             MinMaxId mm3;
             foreach(idft,mm3);
             peak.push(mm3.Mi,mm3.M);
             paint(frame,peak.elm,50,350,Scalar(0,80,0),1,4);
             circle(frame,Point(50+peak.p*4,350+int(peak.elm[peak.p])),3,Scalar(60,230,0),2);
-            //if ( doAbs )
+
             break;
         }
         paint(frame,ring.elm,50,50-int(z),Scalar((hind==0?200:0),(hind==1?200:0),(hind==2?200:0)),pf);
