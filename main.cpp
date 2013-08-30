@@ -174,8 +174,6 @@ int main( int argc, char** argv )
     createTrackbar("kali","control",&kali,90000,ontrack,&KF);
 
     VideoCapture cap(0);
-    // cap.set(CAP_PROP_SETTINGS,1);
-
     int f = 0;
     int64 t = 0;
     while( cap.isOpened() )
